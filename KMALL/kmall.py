@@ -3360,9 +3360,9 @@ class kmall():
                 MissingMRZCount = MissingMRZCount + 1
 
         # Shamelessly creating a data frame just to get a pretty table.
-        res = pd.DataFrame([["File", "NpingsTotal", "Pings Missed", "MissingMRZRecords"],
-                            [self.filename, NpingsMissed + NpingsSeen, NpingsMissed, MissingMRZCount]])
-        print(res.to_string(index=False, header=False))
+        #res = pd.DataFrame([["File", "NpingsTotal", "Pings Missed", "MissingMRZRecords"],
+        #                    [self.filename, NpingsMissed + NpingsSeen, NpingsMissed, MissingMRZCount]])
+        #print(res.to_string(index=False, header=False))
 
         if HaveAllMRZ:
             if self.verbose > 1:
@@ -3828,7 +3828,7 @@ class kmall():
         # device translator will use the device identifier plus the values here, ex: 'TRAI_HD1' + '_serial_number'
         translate_device_ident = {'ATTI_1': 'motion_sensor_1', 'ATTI_2': 'motion_sensor_2', 'ATTI_3': 'motion_sensor_3',
                                   'POSI_1': 'position_1', 'POSI_2': 'position_2', 'POSI_3': 'position_3',
-                                  'CLCK': 'clock', 'SVPI': 'sound_velocity_1', 'TRAI_HD1': 'transducer_1'}
+                                  'CLCK': 'clock', 'SVPI': 'sound_velocity_1', 'TRAI_HD1': 'transducer_1', 'DPHI': 'depth_pressure'}
         translate_device = {'N=': '_serial_number', 'X=': '_along_location', 'Y=': '_athwart_location',
                             'Z=': '_vertical_location', 'R=': '_roll_angle', 'P=': '_pitch_angle',
                             'H=': '_heading_angle', 'S=': '_sounder_size_deg',
@@ -3841,7 +3841,7 @@ class kmall():
                             'IRX=': '_rx_forward', 'IRY=': '_rx_starboard', 'IRZ=': '_rx_down', 'D=': '_time_delay',
                             'G=': '_datum', 'T=': '_time_stamp', 'C=': '_motion_compensation', 'F=': '_data_format',
                             'Q=': '_quality_check', 'I=': '_input_source', 'U=': '_active_passive',
-                            'M=': 'motion_reference', 'A=': '_1pps'}
+                            'M=': 'motion_reference', 'A=': '_1pps', 'O=': '_offset'}
 
         # split by comma delimited groups
         records = [i_text.split(',') for i_text in i_text.split('\n')]
