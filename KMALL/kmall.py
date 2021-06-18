@@ -1164,11 +1164,11 @@ class kmall():
         dg['padding'] = fields[3]
 
         # Skip unknown fields.
-        self.FID.seek(dg['numBytesCmnPart'] - struct.Struct(format_to_unpack).size, 1)
+        #self.FID.seek(dg['numBytesCmnPart'] - struct.Struct(format_to_unpack).size, 1)
 
         return dg
 
-    def read_EMdgmSPOdataBlock(self):
+    def read_EMdgmSPOdataBlock(self, length):
         """
         Read #SPO - Sensor position data block. Data from active sensor is corrected data for position system
         installation parameters. Data is also corrected for motion (roll and pitch only) if enabled by K-Controller
@@ -1193,7 +1193,7 @@ class kmall():
         dg['posFixQuality_m'] = fields[2]
 
         # For some reason, it doesn't work to do this all in one step, but it works broken up into two steps. *shrug*
-        format_to_unpack = "2d3f250s"
+        format_to_unpack = "2d3f"
         fields = struct.unpack(format_to_unpack, self.FID.read(struct.Struct(format_to_unpack).size))
 
         # Motion corrected (if enabled in K-Controller) data as used in depth calculations. Referred to vessel
@@ -1216,9 +1216,16 @@ class kmall():
         # TODO: This is an array of (max?) length MAX_SPO_DATALENGTH; do something else here?
         # TODO: Get MAX_SPO_DATALENGTH from datagram instead of hard-coding in format_to_unpack.
         # TODO: This works for now, but maybe there is a smarter way?
+        # MB changed to calculate remaining bytes from whats been read
+        # using MAX_SPO_DATALENGTH was over reading if SPO packets close to the
+        # end of the file.  Calcing remainder works and reads full raw string
         # Position data as received from sensor, i.e. uncorrected for motion etc.
-        tmp = fields[5]
-        dg['posDataFromSensor'] = tmp[0:tmp.find(b'\r\n')]
+        pos_data_len = length - struct.Struct("2I1f2d3f").size
+        format_to_unpack = "%ds" % pos_data_len
+        fields = struct.unpack(format_to_unpack, self.FID.read(struct.Struct(format_to_unpack).size))
+        #tmp = fields[5]
+        #dg['posDataFromSensor'] = tmp[0:tmp.find(b'\r\n')]
+        dg['posDataFromSensor'] = fields[0]
 
         if self.verbose > 2:
             self.print_datagram(dg)
@@ -1241,7 +1248,10 @@ class kmall():
         dg = {}
         dg['header'] = self.read_EMdgmHeader()
         dg['cmnPart'] = self.read_EMdgmScommon()
-        dg['sensorData'] = self.read_EMdgmSPOdataBlock()
+        
+        ## Data block length is balance of datagram
+        data_block_len =  dg['header']['numBytesDgm'] - (self.FID.tell()-start)
+        dg['sensorData'] = self.read_EMdgmSPOdataBlock(data_block_len)
 
         # Seek to end of the packet.
         self.FID.seek(start + dg['header']['numBytesDgm'], 0)
@@ -1863,7 +1873,7 @@ class kmall():
         # LMD tested.
 
         dg = {}
-        format_to_unpack = "2I1f2d3f"
+        format_to_unpack = "2I1f"
         fields = struct.unpack(format_to_unpack, self.FID.read(struct.Struct(format_to_unpack).size))
 
         dg['timeFromSensor_sec'] = fields[0]
@@ -1871,14 +1881,17 @@ class kmall():
         dg['datetime'] = datetime.datetime.utcfromtimestamp(dg['timeFromSensor_sec']
                                                             + dg['timeFromSensor_nanosec'] / 1.0E9)
         dg['posFixQuality'] = fields[2]
-        dg['correctedLat_deg'] = fields[3]
-        dg['correctedLong_deg'] = fields[4]
-        dg['speedOverGround_mPerSec'] = fields[5]
-        dg['courseOverGround_deg'] = fields[6]
-        dg['ellipsoidHeightReRefPoint_m'] = fields[7]
 
         # For some reason, it doesn't work to do this all in one step, but it works broken up into two steps. *shrug*
-        pos_data_len = length - struct.Struct(format_to_unpack).size
+        format_to_unpack = "2d3f"
+        fields = struct.unpack(format_to_unpack, self.FID.read(struct.Struct(format_to_unpack).size))
+        dg['correctedLat_deg'] = fields[0]
+        dg['correctedLong_deg'] = fields[1]
+        dg['speedOverGround_mPerSec'] = fields[2]
+        dg['courseOverGround_deg'] = fields[3]
+        dg['ellipsoidHeightReRefPoint_m'] = fields[4]
+
+        pos_data_len = length - struct.Struct("2I1f2d3f").size
         format_to_unpack = "%ds" % pos_data_len
         fields = struct.unpack(format_to_unpack, self.FID.read(struct.Struct(format_to_unpack).size))
 
@@ -1905,8 +1918,8 @@ class kmall():
         dg['header'] = self.read_EMdgmHeader()
         dg['cmnPart'] = self.read_EMdgmScommon()
 
-        ## Data block length is balance of datagram minus 4 for the confirmation packet length at end
-        data_block_len =  dg['header']['numBytesDgm'] - 4 -(self.FID.tell()-start)
+        ## Data block length is balance of datagram 
+        data_block_len =  dg['header']['numBytesDgm'] - (self.FID.tell()-start)
         dg['sensorData'] = self.read_EMdgmCPOdataBlock( data_block_len )
 
         # Seek to end of the packet.
@@ -3799,6 +3812,29 @@ class kmall():
                 translated[key] = value.lstrip().rstrip()
         return translated
 
+    def _translate_sonar_model_number(self, settings: dict, model_number: str):
+            sonar_translator = {'em2040': [None, 'tx', 'rx', None],
+                                'em2040_dual_rx': [None, 'tx', 'rx_port', 'rx_stbd'],
+                                'em2040_dual_tx': ['tx_port', 'tx_stbd', 'rx_port', None],
+                                'em2040_dual_tx_rx': ['tx_port', 'tx_stbd', 'rx_port', 'rx_stbd'],
+                                # EM2040c is represented in the .all file as em2045
+                                'em2045': [None, 'txrx', None, None],
+                                'em2045_dual': [None, 'txrx_port', 'txrx_stbd', None]}
+            possibles = [sonar for sonar in list(sonar_translator.keys()) if sonar.find(model_number) > -1]
+            if len(possibles) <= 1:  # not a potential dual head system
+                return model_number
+            else:
+                # get here for all the 2040 variants
+                offs = ['transducer_0_along_location', 'transducer_1_along_location', 'transducer_2_along_location',
+                        'transducer_3_along_location']
+                srch_offsets = [(off in settings) for off in offs]
+                for poss in possibles:
+                    off_test = [(lvr is not None) for lvr in sonar_translator[poss]]
+                    if off_test == srch_offsets:
+                        return poss
+                #print('Unable to determine sonar model from {}'.format(model_number))
+                return model_number
+
     def translate_installation_parameters_todict(self, i_text):
         """
         installation parameters text comes from file as a comma delimited string with mix of = and ; separating the
@@ -3837,6 +3873,8 @@ class kmall():
                             'ICX=': '_center_sector_forward', 'ICY=': '_center_sector_starboard',
                             'ICZ=': '_center_sector_down', 'ISX=': '_starboard_sector_forward',
                             'ISY=': '_starboard_sector_starboard', 'ISZ=': '_starboard_sector_down',
+                            'IX=': '_internal_offset_forward', 'IY=': '_internal_offset_starboard',
+                            'IZ=': '_internal_offset_down',
                             'ITX=': '_tx_forward', 'ITY=': '_tx_starboard', 'ITZ=': '_tx_down',
                             'IRX=': '_rx_forward', 'IRY=': '_rx_starboard', 'IRZ=': '_rx_down', 'D=': '_time_delay',
                             'G=': '_datum', 'T=': '_time_stamp', 'C=': '_motion_compensation', 'F=': '_data_format',
@@ -3851,16 +3889,37 @@ class kmall():
 
         translated = {}
         translate = translate_install
+
+        for rec in records_flatten:  # check for dual head and modify the translation to get the kluster standard convention
+            if rec[0][:8] == 'TRAI_RX2' or rec[0][:8] == 'TRAI_TX2':
+                translate_device_ident['TRAI_TX1'] = 'transducer_0'
+                translate_device_ident['TRAI_TX2'] = 'transducer_1'
+                translate_device_ident['TRAI_RX1'] = 'transducer_2'
+                translate_device_ident['TRAI_RX2'] = 'transducer_3'
+                break
+
+        past_rec = []
         for rec in records_flatten:
             # subgroups are parsed here, first rec contains the prefix
             # ex: ['ATTI_1:X=0.000', 'Y=0.000', 'Z=0.000', 'R=0.000', 'P=0.000', 'H=0.000', 'D=0.000'...
             if len(rec) > 1:
+                if rec[0] == '' and past_rec:
+                    # they tacked on the phase center offsets without a header for some reason
+                    # ex: ['', 'IPX=0.0000', 'IPY=-0.05540', 'IPZ=-0.01200', 'ICX=0.00000', 'ICY=0.01315', 'ICZ=-0.00600', 'ISX=0.00000', 'ISY=0.05540', 'ISZ=-0.01200']
+                    if past_rec[0][:4] == 'TRAI':
+                        rec[0] = past_rec[0]
+                    else:
+                        print('unable to read from IIP block {}'.format(rec))
+                        continue
                 prefix, first_rec = rec[0].split(':')
                 try:
-                    prefix = translate_device_ident[prefix]  # if its a prefix we haven't seen before, just pass it through
-                except:
+                    prefix = translate_device_ident[prefix]
+                except KeyError:  # if its a prefix we haven't seen before, just pass it through
                     pass
-                ky, data = first_rec.split('=')
+                try:
+                    ky, data = first_rec.split('=')
+                except ValueError:  # if there is no equals sign, it must be some data that we don't want
+                    continue
                 translated[prefix + translate_device[ky + '=']] = data
                 for subrec in rec[1:]:
                     ky, data = subrec.split('=')
@@ -3887,17 +3946,20 @@ class kmall():
                     translated[translate[key[0]]] = rec[0][len(key[0]):].rstrip()
                 else:
                     raise ValueError('Found multiple entries valid for record {}:{}'.format(rec, key))
+            past_rec = rec
 
         # plug in new keys for active position/motion sensor needed for kluster to identify the right sensor
+
         for mot_sens in ['motion_sensor_1_active_passive', 'motion_sensor_2_active_passive',
                          'motion_sensor_3_active_passive']:
             if mot_sens in translated:
-                if translated[mot_sens] == 'ACTIVE':
+                if translated[mot_sens] in ['ACTIVE', 'ACTIVE_VEL']:
                     translated['active_heading_sensor'] = 'motion_' + mot_sens[14]  # 'motion_1' in most cases
         for pos_sens in ['position_1_active_passive', 'position_2_active_passive', 'position_3_active_passive']:
             if pos_sens in translated:
                 if translated[pos_sens] == 'ACTIVE':
                     translated['active_position_system_number'] = 'position_' + pos_sens[9]  # 'position_1'
+        translated['sonar_model_number'] = self._translate_sonar_model_number(translated, translated['sonar_model_number'].lower())
         return translated
 
 
